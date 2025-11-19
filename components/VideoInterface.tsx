@@ -293,9 +293,15 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic }) =
             `}>
                {isAudioEnabled ? 'AI Voice Active' : 'Silent Mode • Read Below'}
             </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-serif text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)] leading-tight transition-all duration-300 min-h-[120px] flex items-center justify-center">
+            
+            {/* Dynamic font sizing based on length */}
+            <h2 className={`
+               font-serif text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)] leading-tight transition-all duration-300 min-h-[120px] flex items-center justify-center
+               ${currentPrompt.length > 120 ? 'text-lg md:text-xl lg:text-2xl' : currentPrompt.length > 50 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-2xl md:text-3xl lg:text-4xl'}
+            `}>
                "{currentPrompt}"
             </h2>
+
             {isConnected && isAudioEnabled && (
                <div className="mt-6 flex justify-center items-center gap-1 h-8">
                   {[...Array(5)].map((_, i) => (
