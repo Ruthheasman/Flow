@@ -1,0 +1,8 @@
+{
+  "name": "Flow - AI Video Journal",
+  "description": "An AI-powered video journaling assistant that keeps you in the flow.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
