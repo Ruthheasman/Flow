@@ -3,7 +3,6 @@ import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
 import { base64ToUint8Array, float32To16BitPCM, arrayBufferToBase64, decodeAudioData } from '../utils/audio';
 import { ModeConfig, SessionFeedback } from '../types';
 
-const API_KEY = process.env.API_KEY as string;
 const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025';
 const ANALYSIS_MODEL_NAME = 'gemini-2.5-flash';
 
@@ -71,8 +70,8 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
   }, [isAudioEnabled]);
 
   const connect = async () => {
-    if (!API_KEY) {
-      setError("API Key not found.");
+    if (!process.env.API_KEY) {
+      setError("API Key not found. Please check your environment configuration.");
       return;
     }
     if (isConnecting || isConnected) return;
@@ -82,7 +81,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
     historyRef.current = []; // Reset history
 
     try {
-      const ai = new GoogleGenAI({ apiKey: API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       // 1. Setup Audio Contexts
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -167,7 +166,6 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
             if (message.serverContent?.inputTranscription) {
                const text = message.serverContent.inputTranscription.text;
                if (text) {
-                   // Simple logic to append to history - in a real app we'd debounce/accumulate turns
                    const lastEntry = historyRef.current[historyRef.current.length - 1];
                    if (lastEntry && lastEntry.role === 'user') {
                        lastEntry.text += text;
@@ -198,7 +196,6 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
 
             if (message.serverContent?.turnComplete) {
                console.log("Turn complete");
-               // Optional: could flush history here
                setTimeout(() => setCurrentPrompt(""), 3000); 
             }
 
@@ -226,7 +223,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
           },
           onerror: (e) => {
             console.error("Session Error", e);
-            setError("Connection error occurred.");
+            setError("Connection failed. Please check your network.");
             cleanup();
           }
         },
@@ -237,7 +234,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
           },
           systemInstruction: selectedMode.systemInstruction,
           outputAudioTranscription: { },
-          inputAudioTranscription: { model: "google-default" }, // Enable user transcription for history
+          inputAudioTranscription: { }, // Enable user transcription for history (default settings)
         }
       });
 
@@ -260,7 +257,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
   const generateSessionReport = async (): Promise<SessionFeedback | null> => {
       if (historyRef.current.length === 0) return null;
 
-      const ai = new GoogleGenAI({ apiKey: API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const transcript = historyRef.current.map(entry => `${entry.role.toUpperCase()}: ${entry.text}`).join('\n');
       
       try {

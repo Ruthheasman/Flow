@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, Video as VideoIcon, StopCircle, Play, MoreHorizontal, Settings, Maximize2, Volume2, VolumeX, CheckCircle, Award, Lightbulb, X, Loader2 } from 'lucide-react';
-import { ModeConfig, ModeType, SessionFeedback } from '../types';
+import { Video as VideoIcon, Volume2, VolumeX, CheckCircle, Award, Lightbulb, X, Loader2, Settings, Maximize2 } from 'lucide-react';
+import { ModeConfig, SessionFeedback } from '../types';
 import { useGeminiLive } from '../hooks/useGeminiLive';
 
 interface VideoInterfaceProps {
@@ -22,6 +22,7 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const startTimeRef = useRef<number>(0);
   
   // Initialize Gemini Live Hook
   const { 
@@ -72,7 +73,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
     if (!mediaStream) return;
     
     chunksRef.current = [];
-    // Reset previous feedback
     setFeedback(null);
     setShowFeedbackModal(false);
     
@@ -99,6 +99,15 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
       };
 
       recorder.onstop = () => {
+        const duration = Date.now() - startTimeRef.current;
+        
+        // Discard recordings shorter than 1 second (prevents saving on immediate errors)
+        if (duration < 1000) {
+            console.warn("Recording discarded: duration too short.");
+            chunksRef.current = [];
+            return;
+        }
+
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -118,6 +127,7 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
       };
 
       recorder.start();
+      startTimeRef.current = Date.now();
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
     } catch (err) {
@@ -132,10 +142,12 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
     setIsRecording(false);
 
     // Trigger Analysis
-    setIsAnalyzing(true);
     // We disconnect LIVE first to stop streaming, but we keep the hook state alive enough to run analysis if needed
-    // (Actually, we can run analysis independently of the live connection state as long as we have history)
     disconnect(); 
+    
+    // Only run analysis if the recording was substantial (longer than 5s) to save API calls on false starts
+    // However, we rely on generateSessionReport returning null if history is empty.
+    setIsAnalyzing(true);
     
     try {
         const report = await generateSessionReport();
@@ -154,6 +166,10 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
     if (isRecording) {
       stopRecording();
     } else {
+      if (!hasPermissions) {
+          alert("Please allow camera and microphone access to use this app.");
+          return;
+      }
       connect();
       startRecording();
     }
@@ -362,7 +378,8 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
 
       {/* Error Message */}
       {error && (
-        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 text-sm">
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 text-sm flex items-center gap-2">
+          <X size={16} />
           {error}
         </div>
       )}
