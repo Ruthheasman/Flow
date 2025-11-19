@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { VideoInterface } from './components/VideoInterface';
 import { ModeConfig, ModeType } from './types';
-import { Sparkles, Mic, BookOpen, Wind } from 'lucide-react';
+import { 
+  Sparkles, Mic, BookOpen, Wind, 
+  Briefcase, Sun, Heart, Video, Smartphone, 
+  GraduationCap, Search, Mic2, User 
+} from 'lucide-react';
 
 const MODES: ModeConfig[] = [
   {
@@ -27,10 +31,38 @@ const MODES: ModeConfig[] = [
   }
 ];
 
+interface Template {
+  id: string;
+  label: string;
+  icon: any;
+  mode: ModeType;
+  topic: string;
+  color: string;
+}
+
+const TEMPLATES: Template[] = [
+  { id: 'interview', label: 'Job Interview', icon: Briefcase, mode: ModeType.INTERVIEW, topic: 'Job Interview Practice', color: 'text-blue-500' },
+  { id: 'diary', label: 'Daily Diary', icon: BookOpen, mode: ModeType.INTERVIEW, topic: 'My Daily Reflection', color: 'text-pink-500' },
+  { id: 'gratitude', label: 'Gratitude', icon: Sun, mode: ModeType.TOPIC_DEEP_DIVE, topic: 'Gratitude Journal', color: 'text-amber-500' },
+  { id: 'dating', label: 'Dating Bio', icon: Heart, mode: ModeType.INTERVIEW, topic: 'Dating App Video Profile', color: 'text-rose-500' },
+  { id: 'vlog', label: 'Daily Vlog', icon: Video, mode: ModeType.INTERVIEW, topic: 'Daily Vlog Update', color: 'text-purple-500' },
+  { id: 'app-demo', label: 'App Demo', icon: Smartphone, mode: ModeType.TUTORIAL_GUIDE, topic: 'App Demonstration', color: 'text-indigo-500' },
+  { id: 'teach', label: 'Teach Subject', icon: GraduationCap, mode: ModeType.TUTORIAL_GUIDE, topic: 'Teaching a Lesson', color: 'text-emerald-500' },
+  { id: 'deep-dive', label: 'Deep Dive', icon: Search, mode: ModeType.TOPIC_DEEP_DIVE, topic: 'Deep Topic Discussion', color: 'text-cyan-500' },
+  { id: 'speaking', label: 'Public Speaking', icon: Mic2, mode: ModeType.TOPIC_DEEP_DIVE, topic: 'Public Speaking Practice', color: 'text-orange-500' },
+  { id: 'life-story', label: 'Life Story', icon: User, mode: ModeType.INTERVIEW, topic: 'My Life Story', color: 'text-teal-500' },
+];
+
 export default function App() {
   const [activeModeId, setActiveModeId] = useState<ModeType>(ModeType.INTERVIEW);
+  const [topic, setTopic] = useState<string>("");
 
   const activeMode = MODES.find(m => m.id === activeModeId) || MODES[0];
+
+  const handleTemplateClick = (template: Template) => {
+    setActiveModeId(template.mode);
+    setTopic(template.topic);
+  };
 
   return (
     <div className="min-h-screen bg-flow-bg text-flow-dark font-sans selection:bg-flow-pink selection:text-white">
@@ -58,8 +90,8 @@ export default function App() {
       <main className="px-4 md:px-8 pb-12 max-w-7xl mx-auto">
         
         {/* Mode Selector */}
-        <div className="mb-8 overflow-x-auto pb-4">
-           <div className="flex gap-4 md:justify-center min-w-max">
+        <div className="mb-6 overflow-x-auto pb-2 no-scrollbar">
+           <div className="flex gap-4 md:justify-center min-w-max px-1">
              {MODES.map((mode) => {
                const isActive = mode.id === activeModeId;
                const Icon = mode.id === ModeType.INTERVIEW ? Mic : mode.id === ModeType.TOPIC_DEEP_DIVE ? Sparkles : BookOpen;
@@ -88,13 +120,73 @@ export default function App() {
            </div>
         </div>
 
-        {/* Context Description */}
-        <div className="text-center mb-8 max-w-2xl mx-auto">
-            <p className="text-gray-500">{activeMode.description}</p>
+        {/* Main Video Interface - Moved Up */}
+        <div className="mb-8">
+             <VideoInterface mode={activeMode} topic={topic} />
         </div>
 
-        {/* Main Video Interface */}
-        <VideoInterface mode={activeMode} />
+        {/* Input and Templates - Moved Down */}
+        <div className="flex flex-col-reverse md:flex-col gap-8 max-w-5xl mx-auto">
+            
+            {/* Topic Input */}
+            <div className="max-w-xl mx-auto w-full">
+              <div className="relative group">
+                <div className="absolute -inset-1 bg-gradient-to-r from-flow-pink to-flow-purple rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-200"></div>
+                <input 
+                   type="text" 
+                   value={topic}
+                   onChange={(e) => setTopic(e.target.value)}
+                   placeholder={activeModeId === ModeType.INTERVIEW ? "e.g. My career history..." : activeModeId === ModeType.TUTORIAL_GUIDE ? "e.g. How to bake a cake..." : "e.g. Quantum Physics..."}
+                   className="relative w-full px-6 py-4 bg-white border-2 border-transparent focus:border-flow-purple rounded-xl outline-none text-flow-dark placeholder-gray-400 font-medium shadow-sm transition-all"
+                />
+                <div className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none">
+                   <Sparkles size={16} />
+                </div>
+              </div>
+              <p className="text-center text-xs text-gray-400 mt-2 font-medium">
+                Customize the topic above or choose a template below
+              </p>
+            </div>
+
+            {/* Context Description & Quick Start Templates */}
+            <div>
+                <div className="text-center mb-6 max-w-2xl mx-auto">
+                    <p className="text-gray-500 text-sm bg-white/50 inline-block px-4 py-2 rounded-full backdrop-blur-sm">{activeMode.description}</p>
+                </div>
+
+                <div className="max-w-4xl mx-auto">
+                  <div className="flex items-center gap-2 mb-4 justify-center md:justify-start">
+                     <Sparkles size={14} className="text-flow-purple" />
+                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Quick Start Templates</h3>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                    {TEMPLATES.map((template) => {
+                      const isSelected = topic === template.topic && activeModeId === template.mode;
+                      return (
+                        <button
+                          key={template.id}
+                          onClick={() => handleTemplateClick(template)}
+                          className={`
+                            flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-200 hover:shadow-md group
+                            ${isSelected
+                              ? 'bg-white border-flow-purple ring-1 ring-flow-purple shadow-sm' 
+                              : 'bg-white/60 border-transparent hover:bg-white hover:border-gray-200'
+                            }
+                          `}
+                        >
+                          <div className={`mb-2 p-2 rounded-full bg-gray-50 group-hover:scale-110 transition-transform duration-200 ${template.color}`}>
+                            <template.icon size={18} />
+                          </div>
+                          <span className={`text-xs font-bold text-center leading-tight ${isSelected ? 'text-flow-dark' : 'text-gray-500'}`}>
+                            {template.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+            </div>
+        </div>
 
       </main>
     </div>

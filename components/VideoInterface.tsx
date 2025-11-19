@@ -1,19 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Video as VideoIcon, Volume2, VolumeX, CheckCircle, Award, Lightbulb, X, Loader2, Settings, Maximize2 } from 'lucide-react';
+import { Video as VideoIcon, Volume2, VolumeX, CheckCircle, Award, Lightbulb, X, Loader2, Settings, Maximize2, Zap, Copy, Share2 } from 'lucide-react';
 import { ModeConfig, SessionFeedback } from '../types';
 import { useGeminiLive } from '../hooks/useGeminiLive';
 
 interface VideoInterfaceProps {
   mode: ModeConfig;
+  topic: string;
 }
 
-export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
+export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [hasPermissions, setHasPermissions] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [showSaveNotification, setShowSaveNotification] = useState<boolean>(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(true);
+  const [copySuccess, setCopySuccess] = useState<boolean>(false);
   
   // Feedback State
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
@@ -32,11 +34,13 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
     isConnected, 
     isConnecting, 
     currentPrompt,
+    activeInsight,
     error 
   } = useGeminiLive({ 
     videoElementRef: videoRef, 
     selectedMode: mode,
-    isAudioEnabled
+    isAudioEnabled,
+    topic
   });
 
   // Setup Camera on Mount
@@ -175,6 +179,12 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
     }
   };
 
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
+
   // Watch for AI errors
   useEffect(() => {
     if (error && isRecording) {
@@ -253,6 +263,22 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
         </div>
       </div>
 
+      {/* Insight Card Overlay (Right Side) */}
+      <div className={`
+        absolute right-8 top-32 z-20 max-w-xs w-full transition-all duration-700 transform ease-out
+        ${activeInsight ? 'translate-x-0 opacity-100' : 'translate-x-20 opacity-0 pointer-events-none'}
+      `}>
+        <div className="bg-white/10 backdrop-blur-xl border border-white/30 p-5 rounded-2xl shadow-2xl relative overflow-hidden">
+           <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-flow-purple to-flow-pink"></div>
+           <div className="flex items-center gap-2 mb-2 text-flow-blue">
+              <Zap size={16} className="animate-pulse" />
+              <span className="text-xs font-bold uppercase tracking-widest">Live Insight</span>
+           </div>
+           <h3 className="text-white font-serif text-xl font-bold mb-2 drop-shadow-sm">{activeInsight?.title}</h3>
+           <p className="text-white/90 text-sm leading-relaxed">{activeInsight?.content}</p>
+        </div>
+      </div>
+
       {/* Central Prompt Overlay (Hidden during loading/analysis if not connected) */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-12">
         <div className={`
@@ -323,7 +349,7 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
                     </div>
                  </div>
 
-                 <div className="grid md:grid-cols-2 gap-6">
+                 <div className="grid md:grid-cols-2 gap-6 mb-8">
                     {/* Strengths */}
                     <div>
                        <div className="flex items-center gap-2 mb-3 text-emerald-600 font-bold">
@@ -354,8 +380,28 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
                        </ul>
                     </div>
                  </div>
+
+                 {/* Video Description */}
+                 <div className="bg-gray-50 rounded-xl p-5 border border-gray-100 mb-6">
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2 text-flow-purple font-bold">
+                            <Share2 size={18} />
+                            <h4>Suggested Social Description</h4>
+                        </div>
+                        <button 
+                            onClick={() => copyToClipboard(feedback.videoDescription)}
+                            className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-flow-dark transition"
+                        >
+                            {copySuccess ? <CheckCircle size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                            {copySuccess ? 'Copied!' : 'Copy'}
+                        </button>
+                    </div>
+                    <div className="bg-white p-4 rounded-lg border border-gray-200 text-sm text-gray-600 whitespace-pre-wrap font-mono leading-relaxed">
+                        {feedback.videoDescription}
+                    </div>
+                 </div>
                  
-                 <div className="mt-8 text-center">
+                 <div className="text-center">
                      <button 
                         onClick={() => setShowFeedbackModal(false)}
                         className="bg-flow-dark text-white px-8 py-3 rounded-full font-medium hover:bg-black transition shadow-lg hover:shadow-xl"
@@ -457,4 +503,4 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode }) => {
       </div>
     </div>
   );
-};
+}

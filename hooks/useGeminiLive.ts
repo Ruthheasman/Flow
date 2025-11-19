@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration } from '@google/genai';
 import { base64ToUint8Array, float32To16BitPCM, arrayBufferToBase64, decodeAudioData } from '../utils/audio';
-import { ModeConfig, SessionFeedback } from '../types';
+import { ModeConfig, SessionFeedback, InsightCard } from '../types';
 
 const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025';
 const ANALYSIS_MODEL_NAME = 'gemini-2.5-flash';
@@ -10,12 +10,34 @@ interface UseGeminiLiveProps {
   videoElementRef: React.RefObject<HTMLVideoElement>;
   selectedMode: ModeConfig;
   isAudioEnabled: boolean;
+  topic: string;
 }
 
-export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }: UseGeminiLiveProps) => {
+// Tool Declaration for Insight Cards
+const insightCardTool: FunctionDeclaration = {
+  name: 'createInsightCard',
+  description: 'Display a visual card on the user\'s screen with a short title and fact/summary to support what is being discussed. Use this when the user mentions a specific term, concept, or historical event that warrants a visual highlight.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: {
+        type: Type.STRING,
+        description: 'The short, punchy title for the card (e.g., "Quantum Entanglement", "1984").',
+      },
+      content: {
+        type: Type.STRING,
+        description: 'A brief, 1-sentence definition or interesting fact about the title.',
+      },
+    },
+    required: ['title', 'content'],
+  },
+};
+
+export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, topic }: UseGeminiLiveProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState<string>("Press Start to begin your session...");
+  const [activeInsight, setActiveInsight] = useState<InsightCard | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Refs to keep track of session and audio context without triggering re-renders
@@ -59,6 +81,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
     }
     setIsConnected(false);
     setIsConnecting(false);
+    setActiveInsight(null);
   }, []);
 
   // Handle Audio Toggle dynamically
@@ -103,7 +126,14 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
         throw new Error("Video stream not initialized");
       }
 
-      // 3. Initialize Session
+      // 3. Prepare System Instruction with Topic
+      let finalSystemInstruction = selectedMode.systemInstruction;
+      if (topic && topic.trim().length > 0) {
+        finalSystemInstruction += `\n\nIMPORTANT SESSION CONTEXT:\nThe user has specified the following topic/goal for this session: "${topic}".\nEnsure your questions, prompts, and guidance are strictly grounded in this topic.`;
+      }
+      finalSystemInstruction += `\n\nVISUAL TOOLS: You have access to a 'createInsightCard' tool. Use it proactively to display visual summaries, definitions, or key facts on the user's screen when they mention something interesting. This enhances the video production value.`;
+
+      // 4. Initialize Session
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
         callbacks: {
@@ -162,6 +192,47 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
             }, 1000); 
           },
           onmessage: async (message: LiveServerMessage) => {
+            // Handle Tool Calls (Insight Cards)
+            if (message.toolCall) {
+              const responses = [];
+              for (const fc of message.toolCall.functionCalls) {
+                if (fc.name === 'createInsightCard') {
+                  const args = fc.args as any;
+                  console.log("Insight Card Triggered:", args);
+                  setActiveInsight({
+                    id: Math.random().toString(36).substr(2, 9),
+                    title: args.title,
+                    content: args.content,
+                    timestamp: Date.now()
+                  });
+
+                  // Hide card automatically after 10 seconds
+                  setTimeout(() => {
+                     setActiveInsight(prev => {
+                        // Only clear if it's the same card (check logic could be stricter)
+                        if (prev && prev.title === args.title) return null;
+                        return prev;
+                     });
+                  }, 10000);
+                  
+                  responses.push({
+                    id: fc.id,
+                    name: fc.name,
+                    response: { result: "Card displayed successfully" }
+                  });
+                }
+              }
+              
+              // Send response back to model so it continues flow
+              if (responses.length > 0) {
+                 sessionPromise.then(session => {
+                    session.sendToolResponse({
+                       functionResponses: responses
+                    });
+                 });
+              }
+            }
+
             // Handle Input Transcription (User)
             if (message.serverContent?.inputTranscription) {
                const text = message.serverContent.inputTranscription.text;
@@ -232,9 +303,10 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } 
           },
-          systemInstruction: selectedMode.systemInstruction,
+          systemInstruction: finalSystemInstruction,
+          tools: [{ functionDeclarations: [insightCardTool] }],
           outputAudioTranscription: { },
-          inputAudioTranscription: { }, // Enable user transcription for history (default settings)
+          inputAudioTranscription: { }, 
         }
       });
 
@@ -265,13 +337,15 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
             model: ANALYSIS_MODEL_NAME,
             contents: `Analyze this transcript of a video practice session. 
             Mode context: ${selectedMode.description}
+            User defined topic: ${topic || 'None'}
             
             Transcript:
             ${transcript}
             
             Provide feedback in JSON format with:
-            - score (0-100) based on clarity, confidence, and content.
+            - score (0-100) based on clarity, confidence, and content relevance to the topic.
             - summary (one sentence summary of what was discussed)
+            - videoDescription (a complete, engaging video description suitable for YouTube, including emojis and hashtags)
             - strengths (array of 3 strings)
             - tips (array of 3 strings for improvement)
             `,
@@ -282,6 +356,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
                     properties: {
                         score: { type: Type.NUMBER },
                         summary: { type: Type.STRING },
+                        videoDescription: { type: Type.STRING },
                         strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
                         tips: { type: Type.ARRAY, items: { type: Type.STRING } }
                     }
@@ -307,6 +382,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled }:
     isConnected,
     isConnecting,
     currentPrompt,
+    activeInsight,
     error
   };
 };

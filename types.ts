@@ -22,6 +22,14 @@ export interface LiveSessionState {
 export interface SessionFeedback {
   score: number;
   summary: string;
+  videoDescription: string;
   strengths: string[];
   tips: string[];
+}
+
+export interface InsightCard {
+  id: string;
+  title: string;
+  content: string;
+  timestamp: number;
 }
