@@ -11,34 +11,28 @@ interface UseGeminiLiveProps {
   videoElementRef: React.RefObject<HTMLVideoElement>;
   selectedMode: ModeConfig;
   isAudioEnabled: boolean;
+  isTeleprompterActive: boolean;
   topic: string;
   script?: string;
 }
 
-// Tool Declaration for Insight Cards
 const insightCardTool: FunctionDeclaration = {
   name: 'createInsightCard',
-  description: 'Display a visual card on the user\'s screen with a short title and fact/summary to support what is being discussed. Use this when the user mentions a specific term, concept, or historical event that warrants a visual highlight.',
+  description: 'Display a visual card with a short title and fact/summary.',
   parameters: {
     type: Type.OBJECT,
     properties: {
-      title: {
-        type: Type.STRING,
-        description: 'The short, punchy title for the card (e.g., "Quantum Entanglement", "1984").',
-      },
-      content: {
-        type: Type.STRING,
-        description: 'A brief, 1-sentence definition or interesting fact about the title.',
-      },
+      title: { type: Type.STRING },
+      content: { type: Type.STRING },
     },
     required: ['title', 'content'],
   },
 };
 
-export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, topic, script }: UseGeminiLiveProps) => {
+export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, isTeleprompterActive, topic, script }: UseGeminiLiveProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [currentPrompt, setCurrentPrompt] = useState<string>("Press Start to begin your session...");
+  const [currentPrompt, setCurrentPrompt] = useState<string>("Ready to record...");
   const [activeInsight, setActiveInsight] = useState<InsightCard | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,9 +45,10 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  
   const historyRef = useRef<{role: 'user' | 'model', text: string}[]>([]);
   
+  const isSendingFrame = useRef(false);
+
   const cleanup = useCallback(() => {
     if (videoIntervalRef.current) {
       window.clearInterval(videoIntervalRef.current);
@@ -72,13 +67,12 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
     }
     sourcesRef.current.clear();
     if (inputAudioContextRef.current) {
-      inputAudioContextRef.current.close().catch(console.error);
+      inputAudioContextRef.current.close().catch(() => {});
       inputAudioContextRef.current = null;
     }
     if (outputAudioContextRef.current) {
-      outputAudioContextRef.current.close().catch(console.error);
+      outputAudioContextRef.current.close().catch(() => {});
       outputAudioContextRef.current = null;
-      gainNodeRef.current = null;
     }
     sessionRef.current = null;
     setIsConnected(false);
@@ -86,19 +80,17 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
     setActiveInsight(null);
   }, []);
 
+  // Strict mute handling for Teleprompter sessions
   useEffect(() => {
     if (gainNodeRef.current && outputAudioContextRef.current) {
-      const targetGain = isAudioEnabled ? 1 : 0;
-      gainNodeRef.current.gain.setTargetAtTime(targetGain, outputAudioContextRef.current.currentTime, 0.1);
+      const shouldMute = !isAudioEnabled || isTeleprompterActive;
+      const targetGain = shouldMute ? 0 : 1;
+      gainNodeRef.current.gain.setTargetAtTime(targetGain, outputAudioContextRef.current.currentTime, 0.05);
     }
-  }, [isAudioEnabled]);
+  }, [isAudioEnabled, isTeleprompterActive]);
 
   const connect = async () => {
-    if (!process.env.API_KEY) {
-      setError("API Key not found.");
-      return;
-    }
-    if (isConnecting || isConnected) return;
+    if (!process.env.API_KEY || isConnecting || isConnected) return;
 
     setIsConnecting(true);
     setError(null);
@@ -106,7 +98,6 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
 
@@ -114,7 +105,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
       if (outputCtx.state === 'suspended') await outputCtx.resume();
       
       const gainNode = outputCtx.createGain();
-      gainNode.gain.value = isAudioEnabled ? 1 : 0;
+      gainNode.gain.value = (isAudioEnabled && !isTeleprompterActive) ? 1 : 0;
       gainNode.connect(outputCtx.destination);
       gainNodeRef.current = gainNode;
 
@@ -126,13 +117,14 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
       if (!stream) throw new Error("Video stream not initialized");
 
       let finalSystemInstruction = selectedMode.systemInstruction;
-      if (topic) {
-        finalSystemInstruction += `\n\nTOPIC: "${topic}".`;
-      }
+      if (topic) finalSystemInstruction += `\n\nTOPIC: "${topic}".`;
+      
       if (script && script.trim().length > 0) {
-        finalSystemInstruction += `\n\nUSER SCRIPT: The user has written the following script to follow during this recording: "${script}". Your job is to act as a Director. If they get stuck, deviate significantly, or miss a key point from this script, gently nudge them back on track or ask about the next part of the script.`;
+        finalSystemInstruction += `\n\nTELEPROMPTER MODE IS ACTIVE. THE USER IS READING A SCRIPT.
+        CRITICAL: DO NOT INTERRUPT. DO NOT SPEAK. 
+        Only observe and transcribe. You are a silent recorder right now. 
+        If and only if the user stops reading and asks you a direct question, you may answer briefly.`;
       }
-      finalSystemInstruction += `\n\nVISUAL TOOLS: Use 'createInsightCard' to highlight key concepts.`;
 
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
@@ -151,7 +143,6 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
               const inputData = e.inputBuffer.getChannelData(0);
               const pcmData = float32To16BitPCM(inputData);
               const base64Data = arrayBufferToBase64(pcmData);
-              // CRITICAL: Solely rely on sessionPromise resolves and then call `session.sendRealtimeInput`
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ media: { mimeType: 'audio/pcm;rate=16000', data: base64Data } });
               }).catch(() => {});
@@ -162,42 +153,43 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
 
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
+            // Throttled to 2 seconds per frame to significantly reduce browser overhead during recording
             videoIntervalRef.current = window.setInterval(() => {
-              if (videoElementRef.current && ctx) {
+              if (videoElementRef.current && ctx && !isSendingFrame.current && videoElementRef.current.readyState >= 2) {
+                isSendingFrame.current = true;
                 canvas.width = 320; 
                 canvas.height = 180;
                 ctx.drawImage(videoElementRef.current, 0, 0, canvas.width, canvas.height);
-                const base64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
-                // NOTE: This is important to ensure data is streamed only after the session promise resolves.
+                
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+                const base64 = dataUrl.split(',')[1];
+                
                 sessionPromise.then(session => {
                   session.sendRealtimeInput({ media: { mimeType: 'image/jpeg', data: base64 } });
-                }).catch(() => {});
+                }).catch(() => {}).finally(() => {
+                  isSendingFrame.current = false;
+                });
               }
-            }, 1000); 
+            }, 2000); 
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.toolCall) {
               for (const fc of message.toolCall.functionCalls) {
                 if (fc.name === 'createInsightCard') {
                   const args = fc.args as any;
-                  setActiveInsight({
-                    id: Math.random().toString(36).substr(2, 9),
-                    title: args.title,
-                    content: args.content,
-                    timestamp: Date.now()
-                  });
-                  setTimeout(() => setActiveInsight(null), 8000);
-                  
-                  // Send response back to model to update context.
-                  sessionPromise.then(session => {
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: { result: "Card shown" },
-                      }
+                  // Only show insights if teleprompter is OFF to avoid distraction
+                  if (!isTeleprompterActive) {
+                    setActiveInsight({
+                      id: Math.random().toString(36).substr(2, 9),
+                      title: args.title,
+                      content: args.content,
+                      timestamp: Date.now()
                     });
-                  });
+                    setTimeout(() => setActiveInsight(null), 8000);
+                  }
+                  sessionPromise.then(session => session.sendToolResponse({
+                    functionResponses: { id: fc.id, name: fc.name, response: { result: "ok" } }
+                  }));
                 }
               }
             }
@@ -221,10 +213,10 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
 
             if (message.serverContent?.outputTranscription) {
                const text = message.serverContent.outputTranscription.text || "";
-               setCurrentPrompt(prev => {
-                 if (prev === "Listening...") return text;
-                 return (prev + text).slice(-300);
-               });
+               // DO NOT update UI prompt if teleprompter is active (prevents flicker and script obstruction)
+               if (!isTeleprompterActive) {
+                 setCurrentPrompt(prev => (prev === "Listening..." ? text : (prev + text).slice(-300)));
+               }
                const last = historyRef.current[historyRef.current.length - 1];
                if (last?.role === 'model') last.text += text;
                else historyRef.current.push({ role: 'model', text });
@@ -239,9 +231,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
               const source = ctx.createBufferSource();
               source.buffer = audioBuffer;
               source.connect(gainNodeRef.current); 
-              source.onended = () => {
-                sourcesRef.current.delete(source);
-              };
+              source.onended = () => sourcesRef.current.delete(source);
               source.start(startTime);
               nextStartTimeRef.current = startTime + audioBuffer.duration;
               sourcesRef.current.add(source);
@@ -293,9 +283,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
                 }
             }
         });
-        // Correct text access from GenerateContentResponse
-        const text = response.text;
-        return text ? JSON.parse(text) : null;
+        return response.text ? JSON.parse(response.text) : null;
       } catch (e) {
           return null;
       }

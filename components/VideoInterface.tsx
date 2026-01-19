@@ -26,7 +26,7 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
   // Teleprompter State
   const [showScript, setShowScript] = useState<boolean>(false);
   const [scriptFontSize, setScriptFontSize] = useState<number>(32);
-  const [scrollSpeed, setScrollSpeed] = useState<number>(2); // 1-10 scale
+  const [scrollSpeed, setScrollSpeed] = useState<number>(2);
   const [scrollOffset, setScrollOffset] = useState<number>(0);
   const [isAutoScrolling, setIsAutoScrolling] = useState<boolean>(false);
   
@@ -52,11 +52,11 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
     videoElementRef: videoRef, 
     selectedMode: mode,
     isAudioEnabled,
+    isTeleprompterActive: showScript && isAutoScrolling,
     topic,
     script
   });
 
-  // Handle auto-scrolling logic
   useEffect(() => {
     if (isAutoScrolling && showScript) {
       scrollIntervalRef.current = window.setInterval(() => {
@@ -96,7 +96,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
     setFeedback(null);
     setShowFeedbackModal(false);
 
-    // Prioritize MP4 if supported (Safari), then high-quality WebM
     const supportedTypes = [
       'video/mp4',
       'video/webm; codecs=vp9',
@@ -114,7 +113,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        // Adjust extension based on the actual recorded mimeType
         const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
         a.download = `Flow-Recording-${new Date().getTime()}.${extension}`;
         a.click();
@@ -126,7 +124,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
       
-      // Auto-start teleprompter if script is active
       if (script && script.trim().length > 0) {
         setShowScript(true);
         setIsAutoScrolling(true);
@@ -164,39 +161,60 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
     <div className="relative w-full max-w-5xl mx-auto aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl ring-8 ring-white/50 group">
       <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform scale-x-[-1]" />
 
-      {/* Top Bar */}
-      <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-start z-10 pointer-events-none">
-        <div className="flex flex-col gap-2">
-           <div className="flex gap-2">
-              {isConnected && (
-                <div className="bg-red-500/90 backdrop-blur-sm text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider animate-pulse shadow-lg flex items-center gap-2">
-                  <div className="w-2 h-2 bg-white rounded-full"></div>Live
-                </div>
-              )}
-              {isRecording && (
-                <div className="bg-black/50 backdrop-blur-sm text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border border-white/10 flex items-center gap-2">
-                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>REC
-                </div>
-              )}
-           </div>
-        </div>
-        <div className="bg-black/20 backdrop-blur-md text-white px-4 py-2 rounded-full flex items-center gap-2 text-sm font-medium border border-white/10">
-          <div className={`w-2 h-2 rounded-full ${mode.color}`}></div>{mode.label}
-        </div>
-      </div>
+      {/* Overlays Hidden when script is showing */}
+      {!showScript && (
+        <>
+          <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-start z-10 pointer-events-none">
+            <div className="flex flex-col gap-2">
+               <div className="flex gap-2">
+                  {isConnected && (
+                    <div className="bg-red-500/90 backdrop-blur-sm text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider animate-pulse shadow-lg flex items-center gap-2">
+                      <div className="w-2 h-2 bg-white rounded-full"></div>Live
+                    </div>
+                  )}
+                  {isRecording && (
+                    <div className="bg-black/50 backdrop-blur-sm text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border border-white/10 flex items-center gap-2">
+                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>REC
+                    </div>
+                  )}
+               </div>
+            </div>
+            <div className="bg-black/20 backdrop-blur-md text-white px-4 py-2 rounded-full flex items-center gap-2 text-sm font-medium border border-white/10 pointer-events-none">
+              <div className={`w-2 h-2 rounded-full ${mode.color}`}></div>{mode.label}
+            </div>
+          </div>
 
-      {/* Teleprompter Script Overlay */}
+          <div className={`absolute right-8 top-32 z-40 max-w-xs w-full transition-all duration-700 transform ${activeInsight ? 'translate-x-0 opacity-100' : 'translate-x-20 opacity-0 pointer-events-none'}`}>
+            <div className="bg-white/10 backdrop-blur-xl border border-white/30 p-5 rounded-2xl shadow-2xl relative overflow-hidden">
+               <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-flow-purple to-flow-pink"></div>
+               <div className="flex items-center gap-2 mb-2 text-flow-blue">
+                  <Zap size={16} className="animate-pulse" /><span className="text-xs font-bold uppercase tracking-widest">Live Insight</span>
+               </div>
+               <h3 className="text-white font-serif text-xl font-bold mb-2">{activeInsight?.title}</h3>
+               <p className="text-white/90 text-sm leading-relaxed">{activeInsight?.content}</p>
+            </div>
+          </div>
+
+          <div className={`absolute inset-0 flex items-center justify-center pointer-events-none p-12 z-20 transition-all duration-500 transform ${isConnected ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+            <div className="bg-white/20 backdrop-blur-xl border border-white/30 rounded-[2rem] p-10 shadow-2xl text-center relative max-w-3xl w-full">
+                <h2 className={`font-serif text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)] leading-tight transition-all duration-300 min-h-[120px] flex items-center justify-center ${currentPrompt.length > 120 ? 'text-xl' : 'text-3xl'}`}>
+                   "{currentPrompt}"
+                </h2>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Teleprompter Script Overlay - Takes priority */}
       {showScript && script && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center pointer-events-none bg-black/20 backdrop-blur-[2px]">
-          {/* Reading Guide Marker */}
-          <div className="absolute top-[35%] left-0 w-full h-[100px] bg-white/5 border-y border-white/20 z-10 flex items-center justify-between px-4 pointer-events-none">
-             <ChevronRight className="text-flow-pink" size={32} />
-             <ChevronRight className="text-flow-pink rotate-180" size={32} />
+        <div className="absolute inset-0 z-30 flex flex-col items-center pointer-events-none bg-black/40 backdrop-blur-[4px]">
+          <div className="absolute top-[35%] left-0 w-full h-[120px] bg-white/10 border-y border-white/30 z-10 flex items-center justify-between px-4 pointer-events-none">
+             <ChevronRight className="text-flow-pink" size={40} />
+             <ChevronRight className="text-flow-pink rotate-180" size={40} />
           </div>
 
           <div className="w-full max-w-3xl h-full flex flex-col items-center pointer-events-auto overflow-hidden">
-            {/* Controls Bar for Teleprompter */}
-            <div className="mt-4 flex items-center gap-4 bg-black/60 backdrop-blur-xl px-6 py-2 rounded-full border border-white/20 z-40">
+            <div className="mt-4 flex items-center gap-4 bg-black/80 backdrop-blur-xl px-6 py-2 rounded-full border border-white/20 z-40">
               <button onClick={() => setIsAutoScrolling(!isAutoScrolling)} className="text-white hover:text-flow-purple transition p-1">
                 {isAutoScrolling ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
               </button>
@@ -225,14 +243,13 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
               <button onClick={() => setShowScript(false)} className="ml-4 text-white/60 hover:text-white transition"><X size={18} /></button>
             </div>
 
-            {/* The actual scrolling area */}
             <div className="flex-1 w-full overflow-hidden relative mt-8">
                 <div 
-                  className="w-full px-12 font-serif text-white font-bold transition-transform duration-300 ease-linear text-center leading-[1.4]"
+                  className="w-full px-12 font-serif text-white font-bold transition-transform duration-300 ease-linear text-center leading-[1.6]"
                   style={{ 
                     transform: `translateY(calc(35% - ${scrollOffset}px))`,
                     fontSize: `${scriptFontSize}px`,
-                    textShadow: '0 2px 10px rgba(0,0,0,0.8)'
+                    textShadow: '0 4px 12px rgba(0,0,0,1)'
                   }}
                 >
                   {script.split('\n').map((line, i) => (
@@ -244,27 +261,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
         </div>
       )}
 
-      {/* Insight Card */}
-      <div className={`absolute right-8 top-32 z-40 max-w-xs w-full transition-all duration-700 transform ${activeInsight ? 'translate-x-0 opacity-100' : 'translate-x-20 opacity-0 pointer-events-none'}`}>
-        <div className="bg-white/10 backdrop-blur-xl border border-white/30 p-5 rounded-2xl shadow-2xl relative overflow-hidden">
-           <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-flow-purple to-flow-pink"></div>
-           <div className="flex items-center gap-2 mb-2 text-flow-blue">
-              <Zap size={16} className="animate-pulse" /><span className="text-xs font-bold uppercase tracking-widest">Live Insight</span>
-           </div>
-           <h3 className="text-white font-serif text-xl font-bold mb-2">{activeInsight?.title}</h3>
-           <p className="text-white/90 text-sm leading-relaxed">{activeInsight?.content}</p>
-        </div>
-      </div>
-
-      {/* Central Prompt (Only visible if not reading script) */}
-      <div className={`absolute inset-0 flex items-center justify-center pointer-events-none p-12 z-20 transition-all duration-500 transform ${isConnected && !showScript ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
-        <div className="bg-white/20 backdrop-blur-xl border border-white/30 rounded-[2rem] p-10 shadow-2xl text-center relative max-w-3xl w-full">
-            <h2 className={`font-serif text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)] leading-tight transition-all duration-300 min-h-[120px] flex items-center justify-center ${currentPrompt.length > 120 ? 'text-xl' : 'text-3xl'}`}>
-               "{currentPrompt}"
-            </h2>
-        </div>
-      </div>
-
       {isAnalyzing && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-50 text-white">
             <Loader2 className="w-12 h-12 animate-spin mb-4 text-flow-purple" />
@@ -272,7 +268,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
         </div>
       )}
 
-      {/* Feedback Modal */}
       {showFeedbackModal && feedback && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-8">
            <div className="bg-white rounded-3xl max-w-2xl w-full max-h-full overflow-y-auto shadow-2xl p-8">
@@ -293,7 +288,6 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
         </div>
       )}
 
-      {/* Bottom Controls */}
       <div className={`absolute bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-black/60 via-black/30 to-transparent z-40 transition-opacity duration-300 ${showFeedbackModal ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="flex items-center justify-between">
           <div className="flex gap-3">
