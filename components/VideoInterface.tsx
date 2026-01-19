@@ -17,7 +17,6 @@ interface VideoInterfaceProps {
 
 export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, script }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [hasPermissions, setHasPermissions] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -96,7 +95,16 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
     chunksRef.current = [];
     setFeedback(null);
     setShowFeedbackModal(false);
-    const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp9') ? 'video/webm; codecs=vp9' : 'video/mp4';
+
+    // Prioritize MP4 if supported (Safari), then high-quality WebM
+    const supportedTypes = [
+      'video/mp4',
+      'video/webm; codecs=vp9',
+      'video/webm; codecs=vp8',
+      'video/webm'
+    ];
+    const mimeType = supportedTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+
     try {
       const recorder = new MediaRecorder(mediaStream, { mimeType, videoBitsPerSecond: 2500000 });
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
@@ -106,7 +114,9 @@ export const VideoInterface: React.FC<VideoInterfaceProps> = ({ mode, topic, scr
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `Flow-Recording-${new Date().getTime()}.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+        // Adjust extension based on the actual recorded mimeType
+        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        a.download = `Flow-Recording-${new Date().getTime()}.${extension}`;
         a.click();
         setShowSaveNotification(true);
         setTimeout(() => setShowSaveNotification(false), 3000);

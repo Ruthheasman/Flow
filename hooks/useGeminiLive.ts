@@ -50,6 +50,7 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
   const videoIntervalRef = useRef<number | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   
   const historyRef = useRef<{role: 'user' | 'model', text: string}[]>([]);
   
@@ -66,6 +67,10 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
+    for (const source of sourcesRef.current) {
+      try { source.stop(); } catch (e) {}
+    }
+    sourcesRef.current.clear();
     if (inputAudioContextRef.current) {
       inputAudioContextRef.current.close().catch(console.error);
       inputAudioContextRef.current = null;
@@ -143,10 +148,10 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
             processorRef.current = processor;
             
             processor.onaudioprocess = (e) => {
-              if (!sessionRef.current) return;
               const inputData = e.inputBuffer.getChannelData(0);
               const pcmData = float32To16BitPCM(inputData);
               const base64Data = arrayBufferToBase64(pcmData);
+              // CRITICAL: Solely rely on sessionPromise resolves and then call `session.sendRealtimeInput`
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ media: { mimeType: 'audio/pcm;rate=16000', data: base64Data } });
               }).catch(() => {});
@@ -158,11 +163,12 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             videoIntervalRef.current = window.setInterval(() => {
-              if (videoElementRef.current && ctx && sessionRef.current) {
+              if (videoElementRef.current && ctx) {
                 canvas.width = 320; 
                 canvas.height = 180;
                 ctx.drawImage(videoElementRef.current, 0, 0, canvas.width, canvas.height);
                 const base64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+                // NOTE: This is important to ensure data is streamed only after the session promise resolves.
                 sessionPromise.then(session => {
                   session.sendRealtimeInput({ media: { mimeType: 'image/jpeg', data: base64 } });
                 }).catch(() => {});
@@ -171,7 +177,6 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.toolCall) {
-              const responses = [];
               for (const fc of message.toolCall.functionCalls) {
                 if (fc.name === 'createInsightCard') {
                   const args = fc.args as any;
@@ -182,12 +187,27 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
                     timestamp: Date.now()
                   });
                   setTimeout(() => setActiveInsight(null), 8000);
-                  responses.push({ id: fc.id, name: fc.name, response: { result: "Card shown" } });
+                  
+                  // Send response back to model to update context.
+                  sessionPromise.then(session => {
+                    session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: "Card shown" },
+                      }
+                    });
+                  });
                 }
               }
-              if (responses.length > 0) {
-                 sessionPromise.then(session => session.sendToolResponse({ functionResponses: responses }));
+            }
+
+            if (message.serverContent?.interrupted) {
+              for (const source of sourcesRef.current) {
+                try { source.stop(); } catch (e) {}
               }
+              sourcesRef.current.clear();
+              nextStartTimeRef.current = 0;
             }
 
             if (message.serverContent?.inputTranscription) {
@@ -219,8 +239,12 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
               const source = ctx.createBufferSource();
               source.buffer = audioBuffer;
               source.connect(gainNodeRef.current); 
+              source.onended = () => {
+                sourcesRef.current.delete(source);
+              };
               source.start(startTime);
               nextStartTimeRef.current = startTime + audioBuffer.duration;
+              sourcesRef.current.add(source);
             }
           },
           onclose: () => cleanup(),
@@ -269,7 +293,9 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
                 }
             }
         });
-        return response.text ? JSON.parse(response.text) : null;
+        // Correct text access from GenerateContentResponse
+        const text = response.text;
+        return text ? JSON.parse(text) : null;
       } catch (e) {
           return null;
       }
