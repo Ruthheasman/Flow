@@ -1,16 +1,18 @@
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration } from '@google/genai';
 import { base64ToUint8Array, float32To16BitPCM, arrayBufferToBase64, decodeAudioData } from '../utils/audio';
 import { ModeConfig, SessionFeedback, InsightCard } from '../types';
 
-const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025';
-const ANALYSIS_MODEL_NAME = 'gemini-2.5-flash';
+const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
+const ANALYSIS_MODEL_NAME = 'gemini-3-flash-preview';
 
 interface UseGeminiLiveProps {
   videoElementRef: React.RefObject<HTMLVideoElement>;
   selectedMode: ModeConfig;
   isAudioEnabled: boolean;
   topic: string;
+  script?: string;
 }
 
 // Tool Declaration for Insight Cards
@@ -33,14 +35,13 @@ const insightCardTool: FunctionDeclaration = {
   },
 };
 
-export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, topic }: UseGeminiLiveProps) => {
+export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, topic, script }: UseGeminiLiveProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState<string>("Press Start to begin your session...");
   const [activeInsight, setActiveInsight] = useState<InsightCard | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Refs to keep track of session and audio context without triggering re-renders
   const sessionRef = useRef<any>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -50,10 +51,8 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   
-  // History tracking for analysis
   const historyRef = useRef<{role: 'user' | 'model', text: string}[]>([]);
   
-  // Helper to cleanup resources
   const cleanup = useCallback(() => {
     if (videoIntervalRef.current) {
       window.clearInterval(videoIntervalRef.current);
@@ -68,23 +67,20 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
       sourceRef.current = null;
     }
     if (inputAudioContextRef.current) {
-      inputAudioContextRef.current.close();
+      inputAudioContextRef.current.close().catch(console.error);
       inputAudioContextRef.current = null;
     }
     if (outputAudioContextRef.current) {
-      outputAudioContextRef.current.close();
+      outputAudioContextRef.current.close().catch(console.error);
       outputAudioContextRef.current = null;
       gainNodeRef.current = null;
     }
-    if (sessionRef.current) {
-       sessionRef.current = null;
-    }
+    sessionRef.current = null;
     setIsConnected(false);
     setIsConnecting(false);
     setActiveInsight(null);
   }, []);
 
-  // Handle Audio Toggle dynamically
   useEffect(() => {
     if (gainNodeRef.current && outputAudioContextRef.current) {
       const targetGain = isAudioEnabled ? 1 : 0;
@@ -94,23 +90,24 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
 
   const connect = async () => {
     if (!process.env.API_KEY) {
-      setError("API Key not found. Please check your environment configuration.");
+      setError("API Key not found.");
       return;
     }
     if (isConnecting || isConnected) return;
 
     setIsConnecting(true);
     setError(null);
-    historyRef.current = []; // Reset history
+    historyRef.current = [];
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
-      // 1. Setup Audio Contexts
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+
+      if (inputCtx.state === 'suspended') await inputCtx.resume();
+      if (outputCtx.state === 'suspended') await outputCtx.resume();
       
-      // Setup Gain Node for Volume Control (Mute/Unmute)
       const gainNode = outputCtx.createGain();
       gainNode.gain.value = isAudioEnabled ? 1 : 0;
       gainNode.connect(outputCtx.destination);
@@ -120,203 +117,128 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
       outputAudioContextRef.current = outputCtx;
       nextStartTimeRef.current = 0;
 
-      // 2. Get Media Stream (Audio & Video)
       const stream = videoElementRef.current?.srcObject as MediaStream;
-      if (!stream) {
-        throw new Error("Video stream not initialized");
-      }
+      if (!stream) throw new Error("Video stream not initialized");
 
-      // 3. Prepare System Instruction with Topic
       let finalSystemInstruction = selectedMode.systemInstruction;
-      if (topic && topic.trim().length > 0) {
-        finalSystemInstruction += `\n\nIMPORTANT SESSION CONTEXT:\nThe user has specified the following topic/goal for this session: "${topic}".\nEnsure your questions, prompts, and guidance are strictly grounded in this topic.`;
+      if (topic) {
+        finalSystemInstruction += `\n\nTOPIC: "${topic}".`;
       }
-      finalSystemInstruction += `\n\nVISUAL TOOLS: You have access to a 'createInsightCard' tool. Use it proactively to display visual summaries, definitions, or key facts on the user's screen when they mention something interesting. This enhances the video production value.`;
+      if (script && script.trim().length > 0) {
+        finalSystemInstruction += `\n\nUSER SCRIPT: The user has written the following script to follow during this recording: "${script}". Your job is to act as a Director. If they get stuck, deviate significantly, or miss a key point from this script, gently nudge them back on track or ask about the next part of the script.`;
+      }
+      finalSystemInstruction += `\n\nVISUAL TOOLS: Use 'createInsightCard' to highlight key concepts.`;
 
-      // 4. Initialize Session
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
         callbacks: {
           onopen: () => {
-            console.log("Gemini Live Connection Opened");
             setIsConnected(true);
             setIsConnecting(false);
             setCurrentPrompt("Listening...");
 
-            // Start Audio Streaming
             const source = inputCtx.createMediaStreamSource(stream);
             sourceRef.current = source;
-            
             const processor = inputCtx.createScriptProcessor(4096, 1, 1);
             processorRef.current = processor;
             
             processor.onaudioprocess = (e) => {
+              if (!sessionRef.current) return;
               const inputData = e.inputBuffer.getChannelData(0);
               const pcmData = float32To16BitPCM(inputData);
               const base64Data = arrayBufferToBase64(pcmData);
-              
               sessionPromise.then(session => {
-                session.sendRealtimeInput({
-                  media: {
-                    mimeType: 'audio/pcm;rate=16000',
-                    data: base64Data
-                  }
-                });
-              });
+                session.sendRealtimeInput({ media: { mimeType: 'audio/pcm;rate=16000', data: base64Data } });
+              }).catch(() => {});
             };
 
             source.connect(processor);
             processor.connect(inputCtx.destination);
 
-            // Start Video Streaming (1 FPS)
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            
             videoIntervalRef.current = window.setInterval(() => {
-              if (videoElementRef.current && ctx) {
-                canvas.width = videoElementRef.current.videoWidth * 0.25; 
-                canvas.height = videoElementRef.current.videoHeight * 0.25;
+              if (videoElementRef.current && ctx && sessionRef.current) {
+                canvas.width = 320; 
+                canvas.height = 180;
                 ctx.drawImage(videoElementRef.current, 0, 0, canvas.width, canvas.height);
-                
                 const base64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
-                
                 sessionPromise.then(session => {
-                    session.sendRealtimeInput({
-                        media: {
-                            mimeType: 'image/jpeg',
-                            data: base64
-                        }
-                    });
-                });
+                  session.sendRealtimeInput({ media: { mimeType: 'image/jpeg', data: base64 } });
+                }).catch(() => {});
               }
             }, 1000); 
           },
           onmessage: async (message: LiveServerMessage) => {
-            // Handle Tool Calls (Insight Cards)
             if (message.toolCall) {
               const responses = [];
               for (const fc of message.toolCall.functionCalls) {
                 if (fc.name === 'createInsightCard') {
                   const args = fc.args as any;
-                  console.log("Insight Card Triggered:", args);
                   setActiveInsight({
                     id: Math.random().toString(36).substr(2, 9),
                     title: args.title,
                     content: args.content,
                     timestamp: Date.now()
                   });
-
-                  // Hide card automatically after 10 seconds
-                  setTimeout(() => {
-                     setActiveInsight(prev => {
-                        // Only clear if it's the same card (check logic could be stricter)
-                        if (prev && prev.title === args.title) return null;
-                        return prev;
-                     });
-                  }, 10000);
-                  
-                  responses.push({
-                    id: fc.id,
-                    name: fc.name,
-                    response: { result: "Card displayed successfully" }
-                  });
+                  setTimeout(() => setActiveInsight(null), 8000);
+                  responses.push({ id: fc.id, name: fc.name, response: { result: "Card shown" } });
                 }
               }
-              
-              // Send response back to model so it continues flow
               if (responses.length > 0) {
-                 sessionPromise.then(session => {
-                    session.sendToolResponse({
-                       functionResponses: responses
-                    });
-                 });
+                 sessionPromise.then(session => session.sendToolResponse({ functionResponses: responses }));
               }
             }
 
-            // Handle Input Transcription (User)
             if (message.serverContent?.inputTranscription) {
                const text = message.serverContent.inputTranscription.text;
                if (text) {
-                   const lastEntry = historyRef.current[historyRef.current.length - 1];
-                   if (lastEntry && lastEntry.role === 'user') {
-                       lastEntry.text += text;
-                   } else {
-                       historyRef.current.push({ role: 'user', text });
-                   }
+                   const last = historyRef.current[historyRef.current.length - 1];
+                   if (last?.role === 'user') last.text += text;
+                   else historyRef.current.push({ role: 'user', text });
                }
             }
 
-            // Handle Output Transcription (AI)
             if (message.serverContent?.outputTranscription) {
-               const text = message.serverContent?.outputTranscription?.text || "";
-               
+               const text = message.serverContent.outputTranscription.text || "";
                setCurrentPrompt(prev => {
                  if (prev === "Listening...") return text;
-                 return prev + text;
+                 return (prev + text).slice(-300);
                });
-
-               if (text) {
-                   const lastEntry = historyRef.current[historyRef.current.length - 1];
-                   if (lastEntry && lastEntry.role === 'model') {
-                       lastEntry.text += text;
-                   } else {
-                       historyRef.current.push({ role: 'model', text });
-                   }
-               }
+               const last = historyRef.current[historyRef.current.length - 1];
+               if (last?.role === 'model') last.text += text;
+               else historyRef.current.push({ role: 'model', text });
             }
 
-            if (message.serverContent?.turnComplete) {
-               console.log("Turn complete");
-               setTimeout(() => setCurrentPrompt(""), 3000); 
-            }
-
-            // Handle Audio Output
             const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio && outputAudioContextRef.current && gainNodeRef.current) {
               const ctx = outputAudioContextRef.current;
               const audioData = base64ToUint8Array(base64Audio);
               const audioBuffer = await decodeAudioData(audioData, ctx, 24000, 1);
-              
-              const now = ctx.currentTime;
-              const startTime = Math.max(nextStartTimeRef.current, now);
-              
+              const startTime = Math.max(nextStartTimeRef.current, ctx.currentTime);
               const source = ctx.createBufferSource();
               source.buffer = audioBuffer;
               source.connect(gainNodeRef.current); 
               source.start(startTime);
-              
               nextStartTimeRef.current = startTime + audioBuffer.duration;
             }
           },
-          onclose: () => {
-            console.log("Session Closed");
-            cleanup();
-          },
-          onerror: (e) => {
-            console.error("Session Error", e);
-            setError("Connection failed. Please check your network.");
-            cleanup();
-          }
+          onclose: () => cleanup(),
+          onerror: () => cleanup()
         },
         config: {
           responseModalities: [Modality.AUDIO], 
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } 
-          },
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
           systemInstruction: finalSystemInstruction,
           tools: [{ functionDeclarations: [insightCardTool] }],
-          outputAudioTranscription: { },
-          inputAudioTranscription: { }, 
+          outputAudioTranscription: {},
+          inputAudioTranscription: {}, 
         }
       });
-
       sessionRef.current = sessionPromise;
-
     } catch (err: any) {
-      console.error(err);
       setError(err.message || "Failed to connect");
-      setIsConnecting(false);
-      setIsConnected(false);
+      cleanup();
     }
   };
 
@@ -325,30 +247,14 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
     setCurrentPrompt("Session ended.");
   };
 
-  // New function to analyze the session history
   const generateSessionReport = async (): Promise<SessionFeedback | null> => {
       if (historyRef.current.length === 0) return null;
-
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const transcript = historyRef.current.map(entry => `${entry.role.toUpperCase()}: ${entry.text}`).join('\n');
-      
       try {
         const response = await ai.models.generateContent({
             model: ANALYSIS_MODEL_NAME,
-            contents: `Analyze this transcript of a video practice session. 
-            Mode context: ${selectedMode.description}
-            User defined topic: ${topic || 'None'}
-            
-            Transcript:
-            ${transcript}
-            
-            Provide feedback in JSON format with:
-            - score (0-100) based on clarity, confidence, and content relevance to the topic.
-            - summary (one sentence summary of what was discussed)
-            - videoDescription (a complete, engaging video description suitable for YouTube, including emojis and hashtags)
-            - strengths (array of 3 strings)
-            - tips (array of 3 strings for improvement)
-            `,
+            contents: `Analyze this transcript. Topic: ${topic}, Script: ${script || 'N/A'}\nTranscript:\n${transcript}`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
@@ -363,26 +269,11 @@ export const useGeminiLive = ({ videoElementRef, selectedMode, isAudioEnabled, t
                 }
             }
         });
-        
-        if (response.text) {
-            return JSON.parse(response.text) as SessionFeedback;
-        }
-        return null;
-
+        return response.text ? JSON.parse(response.text) : null;
       } catch (e) {
-          console.error("Analysis failed", e);
           return null;
       }
   };
 
-  return {
-    connect,
-    disconnect,
-    generateSessionReport,
-    isConnected,
-    isConnecting,
-    currentPrompt,
-    activeInsight,
-    error
-  };
+  return { connect, disconnect, generateSessionReport, isConnected, isConnecting, currentPrompt, activeInsight, error };
 };
